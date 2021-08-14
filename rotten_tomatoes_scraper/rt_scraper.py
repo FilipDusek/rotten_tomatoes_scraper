@@ -1,9 +1,10 @@
-from bs4 import BeautifulSoup
 import difflib
 import re
-import requests
-from urllib.request import urlopen
 from collections import defaultdict
+from urllib.request import urlopen
+
+import requests
+from bs4 import BeautifulSoup
 
 
 class RTScraper:
@@ -25,7 +26,8 @@ class RTScraper:
 
     @staticmethod
     def search(term, limit=10):
-        r = requests.get(url=RTScraper.SEARCH_URL, params={"q": term, "limit": limit})
+        r = requests.get(url=RTScraper.SEARCH_URL, params={
+                         "q": term, "limit": limit})
         r.raise_for_status()
         return r.json()
 
@@ -34,14 +36,22 @@ class MovieScraper(RTScraper):
     def __init__(self, **kwargs):
         RTScraper.__init__(self)
         self.movie_genre = None
+        self.movie_year = None
         if 'movie_title' in kwargs.keys():
             self.movie_title = kwargs['movie_title']
+            self.movie_year = kwargs['movie_year']
             self.extract_url()
         if 'movie_url' in kwargs.keys():
             self.url = kwargs['movie_url']
 
     def extract_url(self):
         search_result = self.search(term=self.movie_title)
+
+        if self.movie_year:
+            search_result['movies'] = [
+                movie for movie in search_result['movies']
+                if movie['year'] == self.movie_year
+            ]
 
         movie_titles = []
         for movie in search_result['movies']:
@@ -69,12 +79,14 @@ class MovieScraper(RTScraper):
         # Movie Info
         movie_info_section = soup.find_all('div', class_='media-body')
         soup_movie_info = BeautifulSoup(str(movie_info_section[0]), "lxml")
-        movie_info_length = len(soup_movie_info.find_all('li', class_='meta-row clearfix'))
+        movie_info_length = len(soup_movie_info.find_all(
+            'li', class_='meta-row clearfix'))
 
         for i in range(movie_info_length):
             x = soup_movie_info.find_all('li', class_='meta-row clearfix')[i]
             soup = BeautifulSoup(str(x), "lxml")
-            label = soup.find('div', class_='meta-label subtle').text.strip().replace(':', '')
+            label = soup.find(
+                'div', class_='meta-label subtle').text.strip().replace(':', '')
             value = soup.find('div', class_='meta-value').text.strip()
             if label in columns:
                 if label == 'Box Office':
@@ -118,7 +130,8 @@ class CelebrityScraper(RTScraper):
 
     def extract_url(self):
         search_result = self.search(term=self.celebrity_name)
-        url_celebrity = 'https://www.rottentomatoes.com' + search_result['actors'][0]['url']
+        url_celebrity = 'https://www.rottentomatoes.com' + \
+            search_result['actors'][0]['url']
         self.url = url_celebrity
 
     def _extract_section(self, section):
@@ -127,9 +140,11 @@ class CelebrityScraper(RTScraper):
         selected_section = []
         try:
             if section == 'highest':
-                selected_section = soup.find_all('section', class_='dynamic-poster-list')[0].text.split('\n')
+                selected_section = soup.find_all(
+                    'section', class_='dynamic-poster-list')[0].text.split('\n')
             elif section == 'filmography':
-                selected_section = soup.find_all('tbody', class_='celebrity-filmography__tbody')[0]
+                selected_section = soup.find_all(
+                    'tbody', class_='celebrity-filmography__tbody')[0]
         except IOError:
             print('The parsing process returns an error.')
 
@@ -152,8 +167,8 @@ class CelebrityScraper(RTScraper):
                     pass
 
         self.metadata['movie_titles'] = list(set(movie_titles))
-    
-    
+
+
 class DirectorScraper(RTScraper):
     def __init__(self, **kwargs):
         RTScraper.__init__(self)
@@ -167,9 +182,10 @@ class DirectorScraper(RTScraper):
 
     def extract_url(self):
         search_result = self.search(term=self.director_name)
-        url_director = 'https://www.rottentomatoes.com' + search_result['actors'][0]['url']
+        url_director = 'https://www.rottentomatoes.com' + \
+            search_result['actors'][0]['url']
         self.url = url_director
-    
+
     def extract_metadata(self):
         try:
             if self.print:
@@ -182,14 +198,16 @@ class DirectorScraper(RTScraper):
         page_director = urlopen(self.url)
         soup = BeautifulSoup(page_director, 'lxml')
         try:
-            selected_section = soup.find_all('tbody', class_='celebrity-filmography__tbody')[0]
+            selected_section = soup.find_all(
+                'tbody', class_='celebrity-filmography__tbody')[0]
         except IOError:
             print('The parsing process returns an error.')
 
         soup_filmography = BeautifulSoup(str(selected_section), 'lxml')
         movie_metadata = defaultdict(dict)
         for each_row in soup_filmography.find_all('tr'):
-            is_this_a_linked_movie = each_row.find('td', class_='celebrity-filmography__title').find('a')
+            is_this_a_linked_movie = each_row.find(
+                'td', class_='celebrity-filmography__title').find('a')
             if is_this_a_linked_movie is None:
                 next
             else:
