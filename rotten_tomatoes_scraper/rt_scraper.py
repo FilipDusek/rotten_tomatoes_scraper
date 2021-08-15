@@ -1,10 +1,26 @@
 import difflib
 import re
 from collections import defaultdict
+from string import digits
+from typing import Optional
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 import requests
 from bs4 import BeautifulSoup
+
+
+class MovieNotFound(Exception):
+    pass
+
+
+def int_or_none(val: str) -> Optional[int]:
+    try:
+        out = int(val)
+    except ValueError:
+        return None
+
+    return out
 
 
 class RTScraper:
@@ -35,16 +51,22 @@ class RTScraper:
 class MovieScraper(RTScraper):
     def __init__(self, **kwargs):
         RTScraper.__init__(self)
-        self.movie_genre = None
-        self.movie_year = None
-        if 'movie_title' in kwargs.keys():
-            self.movie_title = kwargs['movie_title']
-            self.movie_year = kwargs['movie_year']
-            self.extract_url()
-        if 'movie_url' in kwargs.keys():
-            self.url = kwargs['movie_url']
 
-    def extract_url(self):
+        self.movie_genre = None
+        self.movie_year = kwargs.get('movie_year')
+        self.movie_title = kwargs.get('movie_title')
+
+        self.url = kwargs.get('movie_url') or self.extract_url()
+
+        movie_metadata = self.extract_metadata()
+        self.critics_score = int_or_none(movie_metadata['Score_Rotten'])
+        self.audience_score = int_or_none(movie_metadata['Score_Audience'])
+        self.critics_count = int_or_none(movie_metadata['Critics_Count'])
+        self.audience_count = int_or_none(movie_metadata['Audience_Count'])
+        self.rating = movie_metadata.get('Rating')
+        self.genre = movie_metadata['Genre']
+
+    def extract_url(self) -> str:
         search_result = self.search(term=self.movie_title)
 
         if self.movie_year:
@@ -53,28 +75,61 @@ class MovieScraper(RTScraper):
                 if movie['year'] == self.movie_year
             ]
 
-        movie_titles = []
-        for movie in search_result['movies']:
-            movie_titles.append(movie['name'])
-
+        movie_titles = [movie['name'] for movie in search_result['movies']]
         closest = self.closest(self.movie_title, movie_titles)
 
         url_movie = None
-        for movie in search_result['movies']:
-            if movie['name'] == closest[0]:
-                url_movie = 'https://www.rottentomatoes.com' + movie['url']
+        if closest:
+            for movie in search_result['movies']:
+                if movie['name'] == closest[0]:
+                    url_movie = 'https://www.rottentomatoes.com' + movie['url']
 
-        self.url = url_movie
+        if not url_movie:
+            raise MovieNotFound(
+                'could not find movie url that would match the criteria'
+            )
+
+        return url_movie
 
     def extract_metadata(self, columns=('Rating', 'Genre', 'Box Office', 'Studio')):
         movie_metadata = dict()
-        page_movie = urlopen(self.url)
+        try:
+            page_movie = urlopen(self.url)
+        except HTTPError as e:
+            if e.code == 404:
+                # search api can return invalid urls
+                raise MovieNotFound('the movie url could not be opened')
+
+            raise e
+
         soup = BeautifulSoup(page_movie, "lxml")
 
         # Score
         score = soup.find('score-board')
         movie_metadata['Score_Rotten'] = score.attrs['tomatometerscore']
         movie_metadata['Score_Audience'] = score.attrs['audiencescore']
+
+        critics_count = score.select(
+            'a[slot="critics-count"]'
+        )[0].text
+        critics_count = "".join(
+            ch for ch in critics_count if ch in digits
+        )
+        try:
+            movie_metadata['Critics_Count'] = int(critics_count)
+        except ValueError:
+            movie_metadata['Critics_Count'] = None
+
+        audience_count = score.select(
+            'a[slot="audience-count"]'
+        )[0].text
+        audience_count = "".join(
+            ch for ch in audience_count if ch in digits
+        )
+        try:
+            movie_metadata['Audience_Count'] = int(audience_count)
+        except ValueError:
+            movie_metadata['Audience_Count'] = None
 
         # Movie Info
         movie_info_section = soup.find_all('div', class_='media-body')
@@ -97,8 +152,8 @@ class MovieScraper(RTScraper):
                     value = value.replace(' ', '').replace('\n', '').split(',')
                 movie_metadata[label] = value
 
-        self.metadata = movie_metadata
-        self.movie_genre = self.extract_genre(self.metadata)
+        movie_metadata['Genre'] = self.extract_genre(self.metadata)
+        return movie_metadata
 
     @staticmethod
     def closest(keyword, words):
